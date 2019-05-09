@@ -1,0 +1,213 @@
+
+* GTYPE
+
+This library is part of NUMCL.
+It provides Julia-like runtime parametric type correctness in CL, based
+on CLtL2 extensions.
+*The main target of this library is the runtime correctness*, but it also adds the equivalent
+type declarations (statically checked by SBCL).
+It supports both SBCL and CCL, but CCL would not enjoy the the speed gain.
+
+#+begin_src lisp
+(defun fn (a b)
+  (declare (gtype (array ?t 1) a))
+  (declare (gtype ?t b))
+  (resolve
+   ...
+   (values (length a) b ?t)))
+
+(fn (make-array 5 :element-type 'single-float) 0.0) ; -> 5, 0.0, 'single-float
+
+(fn (make-array 5 :element-type 'fixnum)       0  ) ; -> 5, 0,   'fixnum
+
+(fn (make-array 5 :element-type 'single-float) 0  ) ;; error -- type unification fails
+(fn (make-array 5 :element-type 'fixnum)       0.0) ;; error -- type unification fails
+
+;; now the real fun starts here...
+
+(defun gemm (a b c)
+  (resolve
+    (declare (gtype (array ?t (?n1 ?n2)) a)
+             (gtype (array ?t (?n2 ?n3)) b)
+             (gtype (array ?t (?n1 ?n3)) c))
+    (dotimes (i ?n1)
+      (dotimes (j ?n2)
+        (dotimes (k ?n3)
+          (setf (aref c i k) (* (aref a i j) (aref b j k))))))))
+
+(let ((c (make-array '(2 2) :initial-element 0)))
+  (gemm #2A((0 1) (2 3))
+        #2A((0 1) (2 3))
+        c)
+  (print c))
+
+;; -> #2A((2 3) (6 9)) 
+
+;; see example.lisp for more usage.
+#+end_src
+
+It does not modify/overwrite the =defun= macro or other special operators and
+naturally blends into the existing common lisp code.  The only requirement is to
+use =gtype= declarations instead of =type= declarations, and the use of
+=resolve= macro which enforces the type consistency.
+There is also =resolving= macro, which is just an alias.
+
+** What it is not
+
+Convenient optimization based on the type is not the purpose of this library. For that purpose,
+combine this library with [[../../../specialized-function/][specialized-function]] (to be published).
+
+Defining a algebraic type system is not the purpose of this library. For that purpose,
+see [[http://quickdocs.org/cl-algebraic-data-type/][cl-algebraic-data-type]].
+
+Currently this library does not have any instrument for defining a parametric structure.
+For that purpose, see [[https://github.com/cosmos72/cl-parametric-types][cl-parametric-type]] at the moment. (but borrowing the idea is planned.)
+
+** Details
+
+=gtype= declarations also add its simplified versions as the standard =type=
+declarations via =define-declaration=. Type variables such as =?t= are
+automatically converted into =*=.
+
+However, currently no Common Lisp implementations
+respect the additional declarations added by =define-declaration=.
+Should they do so, it will compile to the same
+efficient code as those with the =type= declarations.
+CLtL2 [[https://www.cs.cmu.edu/Groups/AI/html/cltl/clm/node102.html][specifically mentions]] that the consequences are undefined
+when the secondary value of =define-declaration= contains any standard declaration specifier, like =type=.
+Maintainers of Lisp implementations (e.g. SBCL maintainers) could interpret it as a freedom of choice.
+We also ultimately hope lisp implementations to propagate this =gtype= information
+outside the function boundary, allowing Lisp to have a proper parametric compile-time checking.
+
+Even though the outer =gtype= declarations fail to make the compiler recognize the equivalent =type= declarations,
+the ones *inside* the =resolving= macro are converted to the =type= declarations.
+Also, the outer =gtype= declaration is inherited and recognized by the inner =resolve= macro.
+In the example below, the =gtype= of =C= is matched against the =gtype= of =A= and =B=.
+
+#+begin_src lisp
+(defun fn6 (a b fn)
+  (resolving
+    (declare (gtype (array ?t ?d) a))
+    (declare (gtype (array ?t ?d) b))
+    (print (list :first ?t ?d))
+    (let ((c (funcall fn a b)))
+      (resolving
+        (declare (gtype (array ?t ?d) c))
+        (print (list :second ?t ?d))
+        (list a b c)))))
+
+(print (fn6 (make-array 2 :element-type 'fixnum)
+            (make-array 2 :element-type 'fixnum)
+            (lambda (a b)
+              (if (zerop (random 1))
+                  a
+                  b))))
+
+;; => (:FIRST FIXNUM (2)) 
+;; => (:SECOND FIXNUM (2)) 
+;; -> (#(0 0) #(0 0) #(0 0)) 
+
+(print (fn6 (make-array 2 :element-type 'fixnum)
+            (make-array 2 :element-type 'fixnum)
+            (lambda (a b)
+              (declare (ignore a b))
+              (make-array 2 :element-type 'single-float))))
+
+;; => (:FIRST FIXNUM (2))
+;; -| error! type variable ?t fails to match, because fixnum and single-float are disjoint
+
+#+end_src
+
+The name =gtype= comes from generic-type.
+
+** Background
+
+There are several proof-of-concept libraries in CL that
+tries to address some aspects of types in CL --- however, they are all subject to
+the Lisp Curse of not being complete and practical.
+Everyone implements half the feature they need personally, then stops there.
+Importantly, none of them naturally fits into the existing code base of Common Lisp. 
+(This library is different, because it has a clear purpose and motivation --- implementing NUMCL.)
+
+The first one you might have heard (and never tried yourself) is
+[[http://quickdocs.org/cl-algebraic-data-type/][cl-algebraic-data-type (or cl-adt in short)]]. *It does not support parametric
+types.* From the documentation, it is also not clear if you can define a list
+that contains only some type (i.e. the arguments to the type specifier is
+evaluated lazily).  It comes with its own pattern matcher, but it is not
+complete and its performance does not seem like the focus.
+As a result, the library is not widely adapted.
+
+The second one is [[https://github.com/cosmos72/cl-parametric-types][cl-parametric-type]], which provides a C++-like templates.
+It can define functions/structures/classes:
+
+#+begin_src lisp
+(template (<t>)
+  (defun less (a b)
+    (declare (type <t> a b))
+    (< a b)))
+(template (&optional (<t1> 'real) (<t2> 'real))
+  (defun multiply (a b)
+    (declare (type <t1> a)
+             (type <t2> b))
+    (* a b)))
+(template (&optional (<t1> t) (<t2> t))
+  (defstruct pair
+    (first  nil :type <t1>)
+    (second nil :type <t2>)))
+(template (&optional (<t1> t) (<t2> t))
+  (defclass pair2 ()
+    (first  :type <t1>)
+    (second :type <t2>)))
+#+end_src
+
+but unfortunately has a nonstandard calling rule that depends on macros:
+
+#+begin_src lisp
+;; i.e. instead of (MAKE-PAIR :FIRST 1 :SECOND 2) you must also specify
+;; the concrete types to instantiate PAIR and MAKE-PAIR:
+;;
+(make-pair (bit fixnum) :first 1 :second 2)
+; instantiating template-type (PAIR BIT FIXNUM) as <PAIR.BIT.FIXNUM>
+#S(<PAIR.BIT.FIXNUM> :FIRST 1 :SECOND 2)
+
+(defvar *pair* *) ;; store last result into *pair*
+*PAIR*
+
+(pair-first (bit fixnum) *pair*)
+1
+#+end_src
+
+cl-parametric-type works by instantiating the variant of the function/structs etc., and
+the reason for the nonstandard call syntax is that it has to
+instantiate those specialized types beforehand.
+
+** Dependencies
+This library is at least tested on implementation listed below:
+
++ SBCL 1.5.2 on X86-64 Linux 4.4.0-146-generic (author's environment)
+
+Also, it depends on the following libraries:
+
++ trivialib.type-unify :
+    
++ trivial-cltl2 by *Tomohiro Matsuyama* :
+    Compatibility package exporting CLtL2 functionality
++ trivia by *Masataro Asai* :
+    NON-optimized pattern matcher compatible with OPTIMA, with extensible optimizer interface and clean codebase
++ alexandria by *Nikodemus Siivola <nikodemus@sb-studio.net>, and others.* :
+    Alexandria is a collection of portable public domain utilities.
++ iterate by ** :
+    Jonathan Amsterdam's iterator/gatherer/accumulator facility
+
+** Installation
+
+
+** Author, License, Copyright
+
+Masataro Asai (guicho2.71828@gmail.com)
+
+Licensed under LGPL v3.
+
+Copyright (c) 2019 IBM Corporation
+
+
