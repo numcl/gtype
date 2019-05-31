@@ -1,5 +1,5 @@
 
-* GTYPE
+* GTYPE [[https://travis-ci.org/numcl/gtype][https://travis-ci.org/numcl/gtype.svg?branch=master]]
 
 This library is part of NUMCL.
 It provides Julia-like runtime parametric type correctness in CL, based
