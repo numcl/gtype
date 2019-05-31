@@ -117,9 +117,13 @@ to add type checks
              (multiple-value-bind (,assignment ,unified-p)
                  (type-unify ',parameters ',gtemplates (list ,@(mapcar (lambda (v) `(type-of ,v)) gvars)))
                ;; (format t "assignment: ~a" ,assignment)
-               (assert ,unified-p nil "gtypes failed to unify to the actual types:~% ~a~%    against~% ~a"
-                       ',gtemplates
-                       (list ,@(mapcar (lambda (v) `(type-of ,v)) gvars)))
+               (assert ,unified-p nil
+                       'simple-type-error
+                       :format-control
+                       "gtypes failed to unify to the actual types:~% ~a~%    against~% ~a"
+                       :format-arguments
+                       (list ',gtemplates
+                             (list ,@(mapcar (lambda (v) `(type-of ,v)) gvars))))
                (let ,(mapcar (lambda (p)
                                `(,p (cdr (assoc ',p ,assignment))))
                              parameters)
