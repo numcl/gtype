@@ -48,6 +48,7 @@ to add type checks
   #-(or sbcl ccl)
   (error "this implementation is not supported. Pull request is welcome"))
 
+#-(or ecl)
 (trivial-cltl2:define-declaration gtype (specifier env)
   (declare (ignorable env))
   ;; (print specifier)
